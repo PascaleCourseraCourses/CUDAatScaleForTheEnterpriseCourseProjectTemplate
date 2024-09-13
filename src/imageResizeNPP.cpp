@@ -38,7 +38,7 @@ cv::Mat resizeImageGPU(unsigned char* d_image, int srcWidth, int srcHeight, int 
 
     // Use OpenCV to save the resized image
     cv::Mat resizedMat(dstHeight, dstWidth, CV_8UC1, h_resized_image);
-    cv::imwrite("./data/resized_gpu.png", resizedMat);
+    cv::imwrite("./output/resized_gpu.png", resizedMat);
 
     FreeDevice<unsigned char>(d_resized_image);
 
@@ -61,14 +61,14 @@ cv::Mat resizeImageCPU(const unsigned char* h_image, int srcWidth, int srcHeight
     std::cout << "Elapsed time for CPU: " << elapsed.count() << " seconds" << std::endl;
 
     // Save the resized image
-    cv::imwrite("./data/resized_cpu.png", dstImage);
+    cv::imwrite("./output/resized_cpu.png", dstImage);
 
     return dstImage;
 
 }
 
 
-__host__ std::tuple<std::vector<unsigned char*>, int, int> read_images(const fs::path& directory) {
+std::tuple<std::vector<unsigned char*>, int, int> read_images(const fs::path& directory) {
     std::vector<unsigned char*> images;
     int width = 0;
     int height = 0;
@@ -120,7 +120,7 @@ std::vector<unsigned char*> CopyAllImagestoDevice(std::vector<unsigned char*> im
 
 std::tuple<std::string, int, int, int> parseArguments(int argc, char* argv[]) {
     // Initialize default values
-    std::string directory = "./data/train/mnist_images";
+    std::string directory = "../data/train/mnist_images";
     int index = 0;
     int dstWidth = 320;
     int dstHeight = 240;

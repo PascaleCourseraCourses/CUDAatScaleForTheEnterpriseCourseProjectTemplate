@@ -43,7 +43,7 @@ $(TARGET): $(SRC)
 
 # Rule for running the application
 run: $(TARGET)
-	$(TARGET) -d "./data/train/mnist_images" -i 1 -w 2000 -h 2000
+	$(TARGET) -d "../data/train/mnist_images" -i 1 -w 2000 -h 2000
 
 # Clean up
 clean:
