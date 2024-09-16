@@ -59,6 +59,8 @@ If you wish to run the binary directly with custom input/output files, you can u
 ./bin/cnn_mnist.exe -d data/ -i 0 -w 500 -h 500
 ```
 
+Use `-w` and `-h` flags to determine the width and height of the resized image. Use `-i` flag to determine the index of an image to process among images in directory specified by flag `-d`.
+
 ## Cleaning Up
 To clean up the compiled binaries and other generated files, run:
 
