@@ -30,8 +30,9 @@ LDFLAGS = -L"C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.5/lib/x64" \
 
 
 # Define source files and target executable
-SRC = $(SRC_DIR)/imageResizeNPP.cpp 
-TARGET = $(BIN_DIR)/imageResizeNPP.exe
+SRC = $(SRC_DIR)/cnn_mnist.cu $(SRC_DIR)/convolution.cu $(SRC_DIR)/activation.cu $(SRC_DIR)/pooling.cu 
+
+TARGET = $(BIN_DIR)/cnn_mnist.exe
 
 # Define the default rule
 all: $(TARGET)
@@ -43,7 +44,7 @@ $(TARGET): $(SRC)
 
 # Rule for running the application
 run: $(TARGET)
-	$(TARGET) -d "../data/train/mnist_images" -i 1 -w 2000 -h 2000
+	$(TARGET) -d "./data" -i 2 -w 500 -h 500
 
 # Clean up
 clean:
