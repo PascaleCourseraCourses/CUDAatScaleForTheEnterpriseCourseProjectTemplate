@@ -1,11 +1,13 @@
-#include <../lib/imageResizeNPP.h>
+#include <../lib/pooling.h>
+#include <../lib/activation.h>
+#include <../lib/convolution.h>
+#include <../lib/utils.h>
+
+#include <random>
+#include <curand_kernel.h>
 
 
-cv::Mat resizeImageGPU(unsigned char* d_image, int srcWidth, int srcHeight, int dstWidth, int dstHeight) {
-
-    size_t dstSize_1 = dstWidth * dstHeight * sizeof(unsigned char);
-
-    unsigned char* d_resized_image = AllocateDeviceMemory<unsigned char>(dstSize_1); // Allocate GPU memory for the resized image
+void resizeImageGPU(unsigned char* d_image, unsigned char* d_resized_image, int srcWidth, int srcHeight, int dstWidth, int dstHeight) {
 
     NppiSize srcSize = {srcWidth, srcHeight}; // Source size
     NppiSize dstSize = {dstWidth, dstHeight}; // Destination size
@@ -15,7 +17,6 @@ cv::Mat resizeImageGPU(unsigned char* d_image, int srcWidth, int srcHeight, int 
     int srcStep = srcWidth * sizeof(unsigned char); // Row step for source image
     int dstStep = dstWidth * sizeof(unsigned char); // Row step for destination image
 
-    auto start = std::chrono::high_resolution_clock::now();
     NppStatus status = nppiResize_8u_C1R(
         d_image, srcStep, srcSize, srcRectROI,
         d_resized_image, dstStep, dstSize, dstRectROI,
@@ -25,45 +26,6 @@ cv::Mat resizeImageGPU(unsigned char* d_image, int srcWidth, int srcHeight, int 
     if (status != NPP_SUCCESS) {
         std::cerr << "NPP error: " << status << std::endl;
     }
-
-    auto end = std::chrono::high_resolution_clock::now();
-
-
-    std::chrono::duration<double> elapsed = end - start;
-    std::cout << "Elapsed time for GPU: " << elapsed.count() << " seconds" << std::endl;
-
-    // Copy the resized image from device to host
-    unsigned char* h_resized_image = new unsigned char[dstSize_1]; // "new" for malloc
-    CopyToHost<unsigned char>(h_resized_image, d_resized_image, dstSize_1);
-
-    // Use OpenCV to save the resized image
-    cv::Mat resizedMat(dstHeight, dstWidth, CV_8UC1, h_resized_image);
-    cv::imwrite("./output/resized_gpu.png", resizedMat);
-
-    FreeDevice<unsigned char>(d_resized_image);
-
-    return resizedMat;
-}
-
-
-cv::Mat resizeImageCPU(const unsigned char* h_image, int srcWidth, int srcHeight, int dstWidth, int dstHeight) {
-
-    cv::Mat dstImage;
-
-    cv::Mat inputImage(srcHeight, srcWidth, CV_8UC1, const_cast<unsigned char*>(h_image));
-
-    // Resize the image
-    auto start = std::chrono::high_resolution_clock::now();
-    cv::resize(inputImage, dstImage, cv::Size(dstWidth, dstHeight), 0, 0, cv::INTER_LINEAR);
-    auto end = std::chrono::high_resolution_clock::now();
-
-    std::chrono::duration<double> elapsed = end - start;
-    std::cout << "Elapsed time for CPU: " << elapsed.count() << " seconds" << std::endl;
-
-    // Save the resized image
-    cv::imwrite("./output/resized_cpu.png", dstImage);
-
-    return dstImage;
 
 }
 
@@ -169,61 +131,104 @@ std::tuple<std::string, int, int, int> parseArguments(int argc, char* argv[]) {
 }
 
 
-double computeMSE(const cv::Mat& img1, const cv::Mat& img2) {
-    if (img1.size() != img2.size() || img1.type() != img2.type()) {
-        std::cerr << "Images must have the same size and type." << std::endl;
-        return -1.0;
-    }
+std::tuple<dim3, dim3, size_t> calculateGridAndBlockParams(int imageWidth, int imageHeight) {
+    // Calculate the number of threads per block
+    int threadsPerBlockX = TILE_WIDTH;
+    int threadsPerBlockY = TILE_WIDTH;
 
-    cv::Mat diff;
-    cv::absdiff(img1, img2, diff); // Compute the absolute difference
+    dim3 threads(threadsPerBlockX, threadsPerBlockY);
 
-    cv::Mat diff_squared;
-    cv::multiply(diff, diff, diff_squared); // Square the difference
+    // Calculate the size of the shared memory
+    size_t sharedMemSize = (TILE_WIDTH + FILTER_WIDTH - 1) * (TILE_WIDTH + FILTER_WIDTH - 1) * sizeof(unsigned char);
 
-    cv::Scalar mse = cv::mean(diff_squared); // Compute the mean squared error
-    return mse[0];
+    // Calculate the number of blocks per grid in each dimension
+    int blocksPerGridX = (imageWidth + TILE_WIDTH - 1) / TILE_WIDTH;
+    int blocksPerGridY = (imageHeight + TILE_WIDTH - 1) / TILE_WIDTH;
+
+    dim3 blocks(blocksPerGridX, blocksPerGridY);
+
+    // Print the calculated parameters
+    std::cout << "Threads per block (X): " << threadsPerBlockX << std::endl;
+    std::cout << "Threads per block (Y): " << threadsPerBlockY << std::endl;
+    std::cout << "Shared memory size (bytes): " << sharedMemSize << std::endl;
+    std::cout << "Blocks per grid (X): " << blocksPerGridX << std::endl;
+    std::cout << "Blocks per grid (Y): " << blocksPerGridY << std::endl;
+
+    return {threads, blocks, sharedMemSize};
 }
 
-// Function to compute the percentage difference
-double computePercentageDifference(const cv::Mat& img1, const cv::Mat& img2) {
-    double mse = computeMSE(img1, img2);
 
-    if (mse < 0) {
-        return -1.0; // Error in MSE computation
+__global__ void initializeWeights(float* weights, int size, unsigned long long seed, float min, float max) {
+    // Define the CUDA random state
+    curandState state;
+    int idx = threadIdx.x + blockDim.x * blockIdx.x;
+
+    // Initialize the random state with the seed
+    curand_init(seed, idx, 0, &state);
+
+    // Make sure to not go out of bounds
+    if (idx < size) {
+        // Generate a random float in the range [min, max]
+        float randValue = curand_uniform(&state) * (max - min) + min;
+        weights[idx] = randValue;
     }
-
-    // Normalize MSE to a percentage
-    double max_pixel_value = 255.0; // For 8-bit images
-    double max_mse = max_pixel_value * max_pixel_value; // Maximum possible MSE
-    double percentage_diff = (mse / max_mse) * 100.0;
-
-    return percentage_diff;
 }
 
 
 int main(int argc, char* argv[]) {
 
     auto[directory, index, dstWidth, dstHeight] = parseArguments(argc, argv);
+    
 
     /// Read images
     auto[h_images, srcWidth, srcHeight] = read_images(directory);
 
+    // Transfer images to device
     auto d_images = CopyAllImagestoDevice(h_images, srcWidth, srcHeight);
 
-    // Allocate and initialize image data
-    cv::Mat resized_gpu_image = resizeImageGPU(d_images[index], srcWidth, srcHeight, dstWidth, dstHeight);
-    cv::Mat resized_cpu_image = resizeImageCPU(h_images[index], srcWidth, srcHeight, dstWidth, dstHeight);
+    // Allocate memory for filter weights
+    int filter_num_elements = FILTER_WIDTH * FILTER_WIDTH;
+    size_t filter_size = filter_num_elements * sizeof(float);
+    float* d_filterWeights = AllocateDeviceMemory<float>(filter_size);
+    float* d_filterGradient = AllocateDeviceMemory<float>(filter_size);
 
-    double percentage_diff = computePercentageDifference(resized_gpu_image, resized_cpu_image);
+    // Initialize filter weights randomly (or with a method like Xavier initialization)
+    initializeWeights<<<1, filter_num_elements>>>(d_filterWeights, filter_num_elements, 1234ULL, -0.5f, 0.5f);
 
-    if (percentage_diff >= 0) {
-        std::cout << "Percentage Difference: " << percentage_diff << "%" << std::endl;
-    }
+    // Resize the images using NPP
+    size_t dstSize = dstWidth * dstHeight * sizeof(unsigned char);
+    unsigned char* d_resized_image = AllocateDeviceMemory<unsigned char>(dstSize);
+    resizeImageGPU(d_images[index], d_resized_image, srcWidth, srcHeight, dstWidth, dstHeight);
+
+    // Calculate threads and blocks required based on image size
+    auto[threads, blocks, sharedMemSize] = calculateGridAndBlockParams(dstWidth, dstHeight);
+
+    // Run convolution kernel
+    size_t img_size = dstWidth * dstHeight * sizeof(unsigned char);
+    unsigned char* convImage = AllocateDeviceMemory<unsigned char>(img_size);
+    unsigned char* poolImage = AllocateDeviceMemory<unsigned char>(img_size);
+    unsigned char* activeImage = AllocateDeviceMemory<unsigned char>(img_size);
+
+    convolutionKernel<<<blocks, threads, sharedMemSize>>>(d_resized_image, convImage, dstWidth, dstHeight, d_filterWeights);
+    MaxPoolingKernel<<<blocks, threads, sharedMemSize>>>(convImage, poolImage, dstWidth, dstHeight);
+    reluKernel<<<blocks, threads>>>(poolImage, activeImage, dstWidth, dstHeight);
+
+    // Copy to host
+    unsigned char* h_conv_image = new unsigned char[img_size]; // "new" for malloc
+    CopyToHost<unsigned char>(h_conv_image, activeImage, img_size);
+    cv::Mat convMat(dstWidth, dstHeight, CV_8UC1, h_conv_image);
+    cv::imwrite("./output/output.png", convMat);
 
     for (auto d_image : d_images) {
         FreeDevice<unsigned char>(d_image);
     }
+
+    FreeDevice<unsigned char>(convImage);
+    FreeDevice<unsigned char>(poolImage);
+    FreeDevice<unsigned char>(activeImage);
+    FreeDevice<float>(d_filterWeights);
+    FreeDevice<float>(d_filterGradient);
+
 
     return 0;
 }
