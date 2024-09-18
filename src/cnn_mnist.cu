@@ -1,33 +1,10 @@
-#include <../lib/pooling.h>
-#include <../lib/activation.h>
-#include <../lib/convolution.h>
+#include <../lib/cnn.h>
+
 #include <../lib/utils.h>
 
 #include <random>
-#include <curand_kernel.h>
 
 
-void resizeImageGPU(unsigned char* d_image, unsigned char* d_resized_image, int srcWidth, int srcHeight, int dstWidth, int dstHeight) {
-
-    NppiSize srcSize = {srcWidth, srcHeight}; // Source size
-    NppiSize dstSize = {dstWidth, dstHeight}; // Destination size
-    NppiRect srcRectROI = {0, 0, srcWidth, srcHeight}; // Source ROI
-    NppiRect dstRectROI = {0, 0, dstWidth, dstHeight}; // Destination ROI
-
-    int srcStep = srcWidth * sizeof(unsigned char); // Row step for source image
-    int dstStep = dstWidth * sizeof(unsigned char); // Row step for destination image
-
-    NppStatus status = nppiResize_8u_C1R(
-        d_image, srcStep, srcSize, srcRectROI,
-        d_resized_image, dstStep, dstSize, dstRectROI,
-        NPPI_INTER_LINEAR
-    );
-
-    if (status != NPP_SUCCESS) {
-        std::cerr << "NPP error: " << status << std::endl;
-    }
-
-}
 
 
 std::tuple<std::vector<unsigned char*>, int, int> read_images(const fs::path& directory) {
@@ -38,8 +15,6 @@ std::tuple<std::vector<unsigned char*>, int, int> read_images(const fs::path& di
     for (const auto& entry : fs::directory_iterator(directory)) {
         if (entry.is_regular_file() && entry.path().extension() == ".png") {
             // Read the image in grayscale
-            npp::ImageCPU_8u_C1 oHostSrc;
-
             cv::Mat img = cv::imread(entry.path().string(), cv::IMREAD_GRAYSCALE);
 
             if (!img.empty()) {
@@ -59,26 +34,6 @@ std::tuple<std::vector<unsigned char*>, int, int> read_images(const fs::path& di
 
     return {images, width, height};
 }
-
-
-std::vector<unsigned char*> CopyAllImagestoDevice(std::vector<unsigned char*> images, int srcWidth, int srcHeight){
-
-    std::vector<unsigned char*> d_images;
-    
-    size_t img_size = srcWidth * srcHeight * sizeof(unsigned char);
-
-    // Allocate memory on device and copy image data
-    for (const auto& img : images) {        
-
-        unsigned char* d_image = AllocateDeviceMemory<unsigned char>(img_size);
-        CopyToDevice<unsigned char>(img, d_image, img_size);
-        d_images.push_back(d_image);
-    }
-
-    return d_images;
-
-}
-
 
 std::tuple<std::string, int, int, int> parseArguments(int argc, char* argv[]) {
     // Initialize default values
@@ -131,47 +86,59 @@ std::tuple<std::string, int, int, int> parseArguments(int argc, char* argv[]) {
 }
 
 
-std::tuple<dim3, dim3, size_t> calculateGridAndBlockParams(int imageWidth, int imageHeight) {
-    // Calculate the number of threads per block
-    int threadsPerBlockX = TILE_WIDTH;
-    int threadsPerBlockY = TILE_WIDTH;
+__host__ void convertToUnsignedChar(const float* input, unsigned char* output, int size) {
 
-    dim3 threads(threadsPerBlockX, threadsPerBlockY);
+    float minRange = *std::min_element(input, input + size);
+    float maxRange = *std::max_element(input, input + size);
 
-    // Calculate the size of the shared memory
-    size_t sharedMemSize = (TILE_WIDTH + FILTER_WIDTH - 1) * (TILE_WIDTH + FILTER_WIDTH - 1) * sizeof(unsigned char);
+    // std::cout << minRange << std::endl;
+    // std::cout << maxRange << std::endl;
 
-    // Calculate the number of blocks per grid in each dimension
-    int blocksPerGridX = (imageWidth + TILE_WIDTH - 1) / TILE_WIDTH;
-    int blocksPerGridY = (imageHeight + TILE_WIDTH - 1) / TILE_WIDTH;
-
-    dim3 blocks(blocksPerGridX, blocksPerGridY);
-
-    // Print the calculated parameters
-    std::cout << "Threads per block (X): " << threadsPerBlockX << std::endl;
-    std::cout << "Threads per block (Y): " << threadsPerBlockY << std::endl;
-    std::cout << "Shared memory size (bytes): " << sharedMemSize << std::endl;
-    std::cout << "Blocks per grid (X): " << blocksPerGridX << std::endl;
-    std::cout << "Blocks per grid (Y): " << blocksPerGridY << std::endl;
-
-    return {threads, blocks, sharedMemSize};
+    if (maxRange == minRange) {
+        std::fill(output, output + size, 0);  
+    } else {
+        for (int i = 0; i < size; ++i) {
+            unsigned char scaledValue = static_cast<unsigned char>(255.0f * (input[i] - minRange) / (maxRange - minRange));
+            output[i] = scaledValue;
+        }
+    }
 }
 
 
-__global__ void initializeWeights(float* weights, int size, unsigned long long seed, float min, float max) {
-    // Define the CUDA random state
-    curandState state;
-    int idx = threadIdx.x + blockDim.x * blockIdx.x;
+__host__ void save_image(int outputWidth, int outputHeight, const float* convImage, int index){
 
-    // Initialize the random state with the seed
-    curand_init(seed, idx, 0, &state);
+    // Calculate size of image
+    int output_size = outputWidth * outputHeight;
+    size_t conv_size = output_size * sizeof(float);
 
-    // Make sure to not go out of bounds
-    if (idx < size) {
-        // Generate a random float in the range [min, max]
-        float randValue = curand_uniform(&state) * (max - min) + min;
-        weights[idx] = randValue;
+    // Allocate dynamic memory to host image with flot and unsigned char types
+    float* h_conv_image = new float[output_size]; // "new" for malloc
+    unsigned char* output = new unsigned char[output_size];
+
+    // Copy image to host
+    cudaError_t err = cudaMemcpy(h_conv_image, convImage, conv_size, cudaMemcpyDeviceToHost);
+
+    if (err != cudaSuccess) {
+        std::cerr << "CUDA error: " << cudaGetErrorString(err)
+                  << " in File " << __FILE__
+                  << " in line " << __LINE__
+                  << std::endl;
+        exit(EXIT_FAILURE);
     }
+
+    // Convert float host image to unsigned char host image (0-255)
+    convertToUnsignedChar(h_conv_image, output, output_size);
+
+    // Create an OpenCV matrix for host image to use OpenCV functions
+    cv::Mat convMat(outputWidth, outputHeight, CV_8UC1, output);
+
+    // Save the image
+    std::string outputFileName = "./output/output_" + std::to_string(index) + ".png";
+    cv::imwrite(outputFileName, convMat);
+
+    delete[] h_conv_image;
+    delete[] output;
+
 }
 
 
@@ -179,56 +146,32 @@ int main(int argc, char* argv[]) {
 
     auto[directory, index, dstWidth, dstHeight] = parseArguments(argc, argv);
     
-
     /// Read images
     auto[h_images, srcWidth, srcHeight] = read_images(directory);
 
-    // Transfer images to device
-    auto d_images = CopyAllImagestoDevice(h_images, srcWidth, srcHeight);
+    // Initialize convolution paramters
+    int filterHeight = 3, filterWidth = 3;
+    int strideHeight = 1, strideWidth = 1;
+    int paddingHeight = 1, paddingWidth = 1;
+    int numFilters = 32;
 
-    // Allocate memory for filter weights
-    int filter_num_elements = FILTER_WIDTH * FILTER_WIDTH;
-    size_t filter_size = filter_num_elements * sizeof(float);
-    float* d_filterWeights = AllocateDeviceMemory<float>(filter_size);
-    float* d_filterGradient = AllocateDeviceMemory<float>(filter_size);
+    // Construct the network
+    CNN SimpleCNN(srcHeight, srcWidth, dstHeight, dstWidth, filterHeight, filterWidth,
+                    strideHeight, strideWidth, paddingHeight, paddingWidth, numFilters);
 
-    // Initialize filter weights randomly (or with a method like Xavier initialization)
-    initializeWeights<<<1, filter_num_elements>>>(d_filterWeights, filter_num_elements, 1234ULL, -0.5f, 0.5f);
+    int i = 0;
+    for (const auto& img : h_images) {     
 
-    // Resize the images using NPP
-    size_t dstSize = dstWidth * dstHeight * sizeof(unsigned char);
-    unsigned char* d_resized_image = AllocateDeviceMemory<unsigned char>(dstSize);
-    resizeImageGPU(d_images[index], d_resized_image, srcWidth, srcHeight, dstWidth, dstHeight);
+        SimpleCNN.ForwardPass(img);
 
-    // Calculate threads and blocks required based on image size
-    auto[threads, blocks, sharedMemSize] = calculateGridAndBlockParams(dstWidth, dstHeight);
+        // Get the output (presumably a convolution output)
+        auto[poolWidth, poolHeight, outputimage] = SimpleCNN.GetOutput();
 
-    // Run convolution kernel
-    size_t img_size = dstWidth * dstHeight * sizeof(unsigned char);
-    unsigned char* convImage = AllocateDeviceMemory<unsigned char>(img_size);
-    unsigned char* poolImage = AllocateDeviceMemory<unsigned char>(img_size);
-    unsigned char* activeImage = AllocateDeviceMemory<unsigned char>(img_size);
+        // Save the result (optionally save with a different name for each image)
+        save_image(poolWidth, poolHeight, outputimage, i);
+        i++;
 
-    convolutionKernel<<<blocks, threads, sharedMemSize>>>(d_resized_image, convImage, dstWidth, dstHeight, d_filterWeights);
-    MaxPoolingKernel<<<blocks, threads, sharedMemSize>>>(convImage, poolImage, dstWidth, dstHeight);
-    reluKernel<<<blocks, threads>>>(poolImage, activeImage, dstWidth, dstHeight);
-
-    // Copy to host
-    unsigned char* h_conv_image = new unsigned char[img_size]; // "new" for malloc
-    CopyToHost<unsigned char>(h_conv_image, activeImage, img_size);
-    cv::Mat convMat(dstWidth, dstHeight, CV_8UC1, h_conv_image);
-    cv::imwrite("./output/output.png", convMat);
-
-    for (auto d_image : d_images) {
-        FreeDevice<unsigned char>(d_image);
     }
-
-    FreeDevice<unsigned char>(convImage);
-    FreeDevice<unsigned char>(poolImage);
-    FreeDevice<unsigned char>(activeImage);
-    FreeDevice<float>(d_filterWeights);
-    FreeDevice<float>(d_filterGradient);
-
 
     return 0;
 }
