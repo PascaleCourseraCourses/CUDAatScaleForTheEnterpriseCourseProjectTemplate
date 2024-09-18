@@ -2,4 +2,4 @@
 #include <iostream>
 
 
-__global__ void reluKernel(const unsigned char* inputImage, unsigned char* outputImage, int width, int height);
+__global__ void reluKernel(const float* inputImage, float* outputImage, int width, int height);
