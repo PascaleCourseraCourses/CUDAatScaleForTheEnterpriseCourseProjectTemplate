@@ -1,30 +1,31 @@
-#include <../lib/cnn.h>
+#include <../lib/cnnlayer.h>
 
 #include <../lib/utils.h>
 
 #include <random>
 
-
-
-
-std::tuple<std::vector<unsigned char*>, int, int> read_images(const fs::path& directory) {
+std::tuple<std::vector<unsigned char*>, int, int, int> read_images(const fs::path& directory) {
     std::vector<unsigned char*> images;
     int width = 0;
     int height = 0;
+    int channels = 0;
 
     for (const auto& entry : fs::directory_iterator(directory)) {
         if (entry.is_regular_file() && entry.path().extension() == ".png") {
             // Read the image in grayscale
-            cv::Mat img = cv::imread(entry.path().string(), cv::IMREAD_GRAYSCALE);
+            cv::Mat img = cv::imread(entry.path().string(), cv::IMREAD_UNCHANGED);
 
             if (!img.empty()) {
 
                 width = img.cols;
                 height = img.rows;
-                size_t img_size = width * height * sizeof(unsigned char);
+                channels = img.channels();
+                size_t img_size = width * height * channels * sizeof(unsigned char);
                 unsigned char* d_image = AllocateHostMemory<unsigned char>(img_size, "pinned");
                 std::memcpy(d_image, img.data, img_size);
                 images.push_back(d_image);
+
+                std::cout << channels;
 
             } else {
                 std::cerr << "Failed to load image: " << entry.path() << std::endl;
@@ -32,7 +33,9 @@ std::tuple<std::vector<unsigned char*>, int, int> read_images(const fs::path& di
         }
     }
 
-    return {images, width, height};
+    std::cout << height;
+
+    return {images, width, height, channels};
 }
 
 std::tuple<std::string, int, int, int> parseArguments(int argc, char* argv[]) {
@@ -105,10 +108,10 @@ __host__ void convertToUnsignedChar(const float* input, unsigned char* output, i
 }
 
 
-__host__ void save_image(int outputWidth, int outputHeight, const float* convImage, int index){
+__host__ void save_image(int outputWidth, int outputHeight, const float* convImage, int numChannels, int index){
 
     // Calculate size of image
-    int output_size = outputWidth * outputHeight;
+    int output_size = outputWidth * outputHeight * numChannels;
     size_t conv_size = output_size * sizeof(float);
 
     // Allocate dynamic memory to host image with flot and unsigned char types
@@ -130,7 +133,7 @@ __host__ void save_image(int outputWidth, int outputHeight, const float* convIma
     convertToUnsignedChar(h_conv_image, output, output_size);
 
     // Create an OpenCV matrix for host image to use OpenCV functions
-    cv::Mat convMat(outputWidth, outputHeight, CV_8UC1, output);
+    cv::Mat convMat(outputHeight, outputHeight, CV_MAKETYPE(CV_8U, numChannels), output);
 
     // Save the image
     std::string outputFileName = "./output/output_" + std::to_string(index) + ".png";
@@ -147,17 +150,17 @@ int main(int argc, char* argv[]) {
     auto[directory, index, dstWidth, dstHeight] = parseArguments(argc, argv);
     
     /// Read images
-    auto[h_images, srcWidth, srcHeight] = read_images(directory);
+    auto[h_images, srcWidth, srcHeight, numChannels] = read_images(directory);
 
     // Initialize convolution paramters
     int filterHeight = 3, filterWidth = 3;
     int strideHeight = 1, strideWidth = 1;
     int paddingHeight = 1, paddingWidth = 1;
-    int numFilters = 32;
+    int numFilters = 5;
 
     // Construct the network
-    CNN SimpleCNN(srcHeight, srcWidth, dstHeight, dstWidth, filterHeight, filterWidth,
-                    strideHeight, strideWidth, paddingHeight, paddingWidth, numFilters);
+    CNNLayer SimpleCNN(srcHeight, srcWidth, dstHeight, dstWidth, filterHeight, filterWidth,
+                    strideHeight, strideWidth, paddingHeight, paddingWidth, numFilters, numChannels);
 
     int i = 0;
     for (const auto& img : h_images) {     
@@ -168,7 +171,7 @@ int main(int argc, char* argv[]) {
         auto[poolWidth, poolHeight, outputimage] = SimpleCNN.GetOutput();
 
         // Save the result (optionally save with a different name for each image)
-        save_image(poolWidth, poolHeight, outputimage, i);
+        save_image(poolWidth, poolHeight, outputimage, 1, i);
         i++;
 
     }

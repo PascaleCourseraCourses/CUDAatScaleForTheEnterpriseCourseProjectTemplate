@@ -1,5 +1,5 @@
-#ifndef CNN_H
-#define CNN_H
+#ifndef CNNLayer_H
+#define CNNLayer_H
 
 #include <cuda_runtime.h>
 #include <iostream>
@@ -12,18 +12,18 @@
 
 #define TILE_WIDTH 16  // Example tile width for shared memory optimization
 
-class CNN {
+class CNNLayer {
 public:
     // Constructor
-    CNN(int inputHeight, int inputWidth,
+    CNNLayer(int inputHeight, int inputWidth,
         int dstHeight, int dstWidth, 
         int filterHeight, int filterWidth,
         int strideHeight, int strideWidth,
         int paddingHeight, int paddingWidth,
-        int numFilters);
+        int numFilters, int numChannels);
 
     // Destructor
-    ~CNN();
+    ~CNNLayer();
 
     // Forward pass
     void ForwardPass(unsigned char* hostInput);
@@ -42,11 +42,9 @@ private:
     int filterHeight, filterWidth;
     int strideHeight, strideWidth;
     int paddingHeight, paddingWidth;
-    int numFilters;
-    int poolWidth;
-    int poolHeight;
-    int convHeight;
-    int convWidth;
+    int numFilters, numChannels;
+    int poolWidth, poolHeight;
+    int convHeight, convWidth;
 
     unsigned char* deviceInput;
     unsigned char* deviceResized;
@@ -60,7 +58,9 @@ private:
     // float* deviceGradOutput;
 
     dim3 gridSizeconv;
-    dim3 blockSizeconv;
+    dim3 blockSizeconv;   
+    dim3 gridSizeact;
+    dim3 blockSizeact;
     dim3 gridSizepool;
     dim3 blockSizepool;
     size_t sharedMemSizeconv;
@@ -79,4 +79,4 @@ private:
     // void UpdateFilters();
 };
 
-#endif // CNN_H
+#endif // CNNLayer_H
