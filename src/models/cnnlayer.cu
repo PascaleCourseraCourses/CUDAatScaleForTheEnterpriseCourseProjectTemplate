@@ -46,21 +46,24 @@ void CNNLayer::AllocateMemory() {
     size_t pool_size = poolWidth * poolHeight * numFilters * sizeof(float);
     cudaMalloc(&devicePool, pool_size);
 
-    // cudaMalloc(&deviceGradInput, /* size */);
+    cudaMalloc(&deviceGradOutput, pool_size);
+    cudaMalloc(&deviceGradAct, act_size);
+    cudaMalloc(&deviceGradConv, conv_size);
+    cudaMalloc(&deviceGradInput, size_resized);
 
-    // cudaMalloc(&deviceGradFilters, /* size */);
 
-    // cudaMalloc(&deviceGradOutput, /* size */);
+    int num_threads_col = TILE_WIDTH;
+    int num_threads_row = TILE_WIDTH;
 
-    blockSizeconv = dim3(TILE_WIDTH, TILE_WIDTH, numChannels); 
-    gridSizeconv = dim3((convWidth + TILE_WIDTH - 1) / TILE_WIDTH, (convHeight + TILE_WIDTH - 1) / TILE_WIDTH, numFilters);
+    blockSizeconv = dim3(num_threads_col, num_threads_row, numChannels); 
+    gridSizeconv = dim3((convWidth + num_threads_col - 1) / num_threads_col, (convHeight + num_threads_row - 1) / num_threads_row, numFilters);
     sharedMemSizeconv = (TILE_WIDTH + filterWidth  - 1) * (TILE_WIDTH + filterHeight  - 1) * numChannels * sizeof(float);
 
-    blockSizeact = dim3(TILE_WIDTH, TILE_WIDTH, 1); 
-    gridSizeact = dim3((convWidth + TILE_WIDTH - 1) / TILE_WIDTH, (convHeight + TILE_WIDTH - 1) / TILE_WIDTH, numFilters);
+    blockSizeact = dim3(num_threads_col, num_threads_row, 1); 
+    gridSizeact = dim3((convWidth + num_threads_col - 1) / num_threads_col, (convHeight + num_threads_row - 1) / num_threads_row, numFilters);
 
-    blockSizepool = dim3(TILE_WIDTH, TILE_WIDTH, 1); 
-    gridSizepool = dim3((poolWidth + TILE_WIDTH - 1) / TILE_WIDTH, (poolHeight + TILE_WIDTH - 1) / TILE_WIDTH, numFilters);
+    blockSizepool = dim3(num_threads_col, num_threads_row, 1); 
+    gridSizepool = dim3((poolWidth + num_threads_col - 1) / num_threads_col, (poolHeight + num_threads_row - 1) / num_threads_row, numFilters);
     sharedMemSizepool = (TILE_WIDTH + filterWidth  - 1) * (TILE_WIDTH + filterHeight  - 1) * sizeof(float);
 
     cudaError_t err = cudaGetLastError();
@@ -82,10 +85,10 @@ void CNNLayer::FreeMemory() {
     cudaFree(deviceConv);
     cudaFree(devicePool);
     cudaFree(deviceAct);
-
-    // cudaFree(deviceGradInput);
-    // cudaFree(deviceGradFilters);
-    // cudaFree(deviceGradOutput);
+    cudaFree(deviceGradOutput);          
+    cudaFree(deviceGradAct);
+    cudaFree(deviceGradConv);
+    cudaFree(deviceGradInput);
 
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess) {
@@ -121,7 +124,8 @@ void CNNLayer::ForwardPass(unsigned char* hostInput) {
 
 // Backward pass
 // void CNNLayer::BackwardPass(float* deviceGradOutput) {
-//     cudaMemcpy(this->deviceGradOutput, deviceGradOutput, /* size */, cudaMemcpyHostToDevice);
+
+//     cudaMemcpy(this->deviceGradOutput, deviceGradOutput, poolHeight * poolWidth * numFilters * sizeof(float), cudaMemcpyHostToDevice);
 //     LaunchMaxPoolingBackwardKernel();
 //     LaunchActivationBackwardKernel();
 //     LaunchConvolutionBackwardKernel();
@@ -148,6 +152,44 @@ void CNNLayer::LaunchConvolutionKernel() {
                   << std::endl;
         exit(EXIT_FAILURE);
     }
+
+
+    float* singlefitler = deviceConv + 0 * convHeight * convWidth;
+    int output_size = convHeight * convWidth;
+    float* hostOutputfloat = new float[output_size]; 
+    unsigned char* hostOutputuchar = new unsigned char[output_size];
+
+    err = cudaMemcpy(hostOutputfloat, singlefitler, output_size * sizeof(float), cudaMemcpyDeviceToHost);
+
+    if (err != cudaSuccess) {
+        std::cerr << "CUDA error: " << cudaGetErrorString(err)
+                    << " in File " << __FILE__
+                    << " in line " << __LINE__
+                    << std::endl;
+        exit(EXIT_FAILURE);
+    }
+
+    float minRange = *std::min_element(hostOutputfloat, hostOutputfloat + output_size);
+    float maxRange = *std::max_element(hostOutputfloat, hostOutputfloat + output_size);
+
+    std::cout << minRange << std::endl;
+    std::cout << maxRange << std::endl;
+
+    if (maxRange == minRange) {
+        std::fill(hostOutputuchar, hostOutputuchar + output_size, 0);  
+    } else {
+        for (int i = 0; i < output_size; ++i) {
+            unsigned char scaledValue = static_cast<unsigned char>(255.0f * (hostOutputfloat[i] - minRange) / (maxRange - minRange));
+            hostOutputuchar[i] = scaledValue;
+        }
+    }
+
+    cv::Mat convMat(convHeight, convWidth, CV_MAKETYPE(CV_8U, 1), hostOutputuchar);
+    cv::imwrite("./output/temp.png", convMat);
+
+
+    delete[] hostOutputfloat;
+    delete[] hostOutputuchar;
 
 }
 
@@ -187,42 +229,42 @@ void CNNLayer::LaunchMaxPoolingKernel() {
         exit(EXIT_FAILURE);
     }
 
-    // float* singlefitler = devicePool + 3 * poolHeight * poolWidth;
-    // int output_size = poolWidth * poolHeight;
-    // float* hostOutputfloat = new float[output_size]; 
-    // unsigned char* hostOutputuchar = new unsigned char[output_size];
+    float* singlefitler = devicePool + 0 * poolHeight * poolWidth;
+    int output_size = poolWidth * poolHeight;
+    float* hostOutputfloat = new float[output_size]; 
+    unsigned char* hostOutputuchar = new unsigned char[output_size];
 
-    // err = cudaMemcpy(hostOutputfloat, singlefitler, output_size * sizeof(float), cudaMemcpyDeviceToHost);
+    err = cudaMemcpy(hostOutputfloat, singlefitler, output_size * sizeof(float), cudaMemcpyDeviceToHost);
 
-    // if (err != cudaSuccess) {
-    //     std::cerr << "CUDA error: " << cudaGetErrorString(err)
-    //                 << " in File " << __FILE__
-    //                 << " in line " << __LINE__
-    //                 << std::endl;
-    //     exit(EXIT_FAILURE);
-    // }
+    if (err != cudaSuccess) {
+        std::cerr << "CUDA error: " << cudaGetErrorString(err)
+                    << " in File " << __FILE__
+                    << " in line " << __LINE__
+                    << std::endl;
+        exit(EXIT_FAILURE);
+    }
 
-    // float minRange = *std::min_element(hostOutputfloat, hostOutputfloat + output_size);
-    // float maxRange = *std::max_element(hostOutputfloat, hostOutputfloat + output_size);
+    float minRange = *std::min_element(hostOutputfloat, hostOutputfloat + output_size);
+    float maxRange = *std::max_element(hostOutputfloat, hostOutputfloat + output_size);
 
-    // std::cout << minRange << std::endl;
-    // std::cout << maxRange << std::endl;
+    std::cout << minRange << std::endl;
+    std::cout << maxRange << std::endl;
 
-    // if (maxRange == minRange) {
-    //     std::fill(hostOutputuchar, hostOutputuchar + output_size, 0);  
-    // } else {
-    //     for (int i = 0; i < output_size; ++i) {
-    //         unsigned char scaledValue = static_cast<unsigned char>(255.0f * (hostOutputfloat[i] - minRange) / (maxRange - minRange));
-    //         hostOutputuchar[i] = scaledValue;
-    //     }
-    // }
+    if (maxRange == minRange) {
+        std::fill(hostOutputuchar, hostOutputuchar + output_size, 0);  
+    } else {
+        for (int i = 0; i < output_size; ++i) {
+            unsigned char scaledValue = static_cast<unsigned char>(255.0f * (hostOutputfloat[i] - minRange) / (maxRange - minRange));
+            hostOutputuchar[i] = scaledValue;
+        }
+    }
 
-    // cv::Mat convMat(poolHeight, poolWidth, CV_MAKETYPE(CV_8U, 1), hostOutputuchar);
-    // cv::imwrite("./output/temp.png", convMat);
+    cv::Mat convMat(poolHeight, poolWidth, CV_MAKETYPE(CV_8U, 1), hostOutputuchar);
+    cv::imwrite("./output/temp1.png", convMat);
 
 
-    // delete[] hostOutputfloat;
-    // delete[] hostOutputuchar;
+    delete[] hostOutputfloat;
+    delete[] hostOutputuchar;
 }
 
 
@@ -247,8 +289,11 @@ void CNNLayer::LaunchMaxPoolingKernel() {
 
 // Implement max pooling backward kernel
 // void CNNLayer::LaunchMaxPoolingBackwardKernel() {
-//     MaxPoolingBackwardKernel<<<gridSize, blockSize>>>(deviceGradOutput, deviceGradInput,
-//                                                       /* pooling parameters */);
+//     MaxPoolingBackwardKernelSharedMultiple<<<gridSizepool, blockSizepool, sharedMemSizepool>>>(deviceAct, deviceGradOutput, deviceGradAct, 
+//                                                                                                 convHeight, convWidth, 
+//                                                                                                 filterHeight, filterWidth, 
+//                                                                                                 strideHeight, strideWidth, 
+//                                                                                                 paddingHeight, paddingWidth, numFilters);
 //     cudaDeviceSynchronize();
 // }
 

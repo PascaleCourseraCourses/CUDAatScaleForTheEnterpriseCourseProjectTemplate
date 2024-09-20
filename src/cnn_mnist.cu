@@ -153,8 +153,8 @@ int main(int argc, char* argv[]) {
     auto[h_images, srcWidth, srcHeight, numChannels] = read_images(directory);
 
     // Initialize convolution paramters
-    int filterHeight = 3, filterWidth = 3;
-    int strideHeight = 1, strideWidth = 1;
+    int filterHeight = 5, filterWidth = 5;
+    int strideHeight = 2, strideWidth = 2;
     int paddingHeight = 1, paddingWidth = 1;
     int numFilters = 5;
 
