@@ -2,7 +2,7 @@
 
 ## Overview
 
-This project implements basic operations of a Convolutional Neural Network (CNN), including convolution, max pooling, and ReLU activations, along with image augmentation. The image resizing functionality utilizes the NVIDIA Performance Primitives (NPP) library. Key learning outcomes include building CUDA source files with `make`, understanding various flags, including external libraries, and utilizing shared memory for efficient convolution and pooling operations. Challenges included implementing image padding. The code currently supports grayscale images with a filter size of 3x3 for convolution and pooling, using "Same" padding mode to maintain input and output image sizes.
+This project implements basic operations of a Convolutional Neural Network (CNN), including convolution, max pooling, and ReLU activations, along with image resize. Currently, the code supports images with same height, width, and channels. The image resizing functionality utilizes the NVIDIA Performance Primitives (NPP) library. Key learning outcomes include building CUDA source files with `make`, understanding various flags, including external libraries, and utilizing shared memory for efficient convolution and pooling operations. Challenges included implementing image padding. Arbitrary filter size, padding, and stride may be used in the CNN layer which can be changed in the source file cnn_mnist.cu.
 
 ## Code Organization
 

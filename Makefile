@@ -44,7 +44,7 @@ $(TARGET): $(SRC)
 
 # Rule for running the application
 run: $(TARGET)
-	$(TARGET) -d "./data" -i 0 -w 500 -h 500
+	$(TARGET) -d "./data" -w 500 -h 500
 
 # Clean up
 clean:

@@ -39,10 +39,9 @@ std::tuple<std::vector<unsigned char*>, int, int, int, std::vector<std::string>>
     return {images, width, height, channels, basenames}; 
 }
 
-std::tuple<std::string, int, int, int> parseArguments(int argc, char* argv[]) {
+std::tuple<std::string, int, int> parseArguments(int argc, char* argv[]) {
     // Initialize default values
     std::string directory = "../data/train/mnist_images";
-    int index = 0;
     int dstWidth = 320;
     int dstHeight = 240;
 
@@ -54,15 +53,8 @@ std::tuple<std::string, int, int, int> parseArguments(int argc, char* argv[]) {
         if (arg == "-d" && i + 1 < argc) {
             directory = argv[++i];
         }
-        // Check for the index flag
-        else if (arg == "-i" && i + 1 < argc) {
-            try {
-                index = std::stoi(argv[++i]);
-            } catch (const std::invalid_argument& e) {
-                std::cerr << "Invalid index value provided. Using default value 0." << std::endl;
-            }
-        }
-        // Check for the index flag
+
+        // Check for the width flag
         else if (arg == "-w" && i + 1 < argc) {
             try {
                 dstWidth = std::stoi(argv[++i]);
@@ -70,7 +62,7 @@ std::tuple<std::string, int, int, int> parseArguments(int argc, char* argv[]) {
                 std::cerr << "Invalid width value provided. Using default value 320." << std::endl;
             }
         }
-        // Check for the index flag
+        // Check for the height flag
         else if (arg == "-h" && i + 1 < argc) {
             try {
                 dstHeight = std::stoi(argv[++i]);
@@ -81,12 +73,11 @@ std::tuple<std::string, int, int, int> parseArguments(int argc, char* argv[]) {
     }
 
     std::cout << "Data Path: " << directory << std::endl;
-    std::cout << "Image Index: " << index << std::endl;
     std::cout << "Width: " << dstWidth << std::endl;
     std::cout << "Height: " << dstHeight << std::endl;
 
 
-    return {directory, index, dstWidth, dstHeight};
+    return {directory, dstWidth, dstHeight};
 }
 
 
@@ -148,7 +139,7 @@ __host__ void save_image(int outputWidth, int outputHeight, const float* convIma
 
 int main(int argc, char* argv[]) {
 
-    auto[directory, index, dstWidth, dstHeight] = parseArguments(argc, argv);
+    auto[directory, dstWidth, dstHeight] = parseArguments(argc, argv);
     
     // Read images
     auto[h_images, srcWidth, srcHeight, numChannels, filenames] = read_images(directory);
