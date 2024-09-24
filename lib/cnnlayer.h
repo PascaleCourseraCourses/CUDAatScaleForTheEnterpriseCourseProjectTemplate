@@ -28,11 +28,6 @@ public:
     // Forward pass
     void ForwardPass(unsigned char* hostInput);
 
-    // Backward pass
-    void BackwardPass(float* deviceGradOutput);
-
-
-
     // Setters and Getters for parameters
     std::tuple<int, int, float*> GetOutput();
 
@@ -52,10 +47,6 @@ private:
     float* deviceConv;
     float* devicePool;
     float* deviceAct;
-    // float* deviceIntermediate;
-    // float* deviceGradInput;
-    // float* deviceGradFilters;
-    // float* deviceGradOutput;
 
     dim3 gridSizeconv;
     dim3 blockSizeconv;   
@@ -73,10 +64,6 @@ private:
     void LaunchConvolutionKernel();
     void LaunchActivationKernel();
     void LaunchMaxPoolingKernel();
-    // void LaunchConvolutionBackwardKernel();
-    // void LaunchActivationBackwardKernel();
-    // void LaunchMaxPoolingBackwardKernel();
-    // void UpdateFilters();
 };
 
 #endif // CNNLayer_H
