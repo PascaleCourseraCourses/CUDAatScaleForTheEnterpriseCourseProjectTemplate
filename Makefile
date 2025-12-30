@@ -43,10 +43,6 @@ BIN_DIR = bin
 DATA_DIR = data
 LIB_DIR = lib
 
-# Define source files and target executable
-SRC = $(SRC_DIR)/imageRotationNPP.cpp
-TARGET = $(BIN_DIR)/imageRotationNPP
-
 # Define the default rule
 all: $(TARGET)
 
@@ -55,23 +51,13 @@ $(TARGET): $(SRC)
 	mkdir -p $(BIN_DIR)
 	$(NVCC) $(CXXFLAGS) $(SRC) -o $(TARGET) $(LDFLAGS)
 
-# Rule for running the application
-run: $(TARGET)
-	./$(TARGET) --input $(DATA_DIR)/Lena.png --output $(DATA_DIR)/Lena_rotated.png
-
 # Clean up
 clean:
 	rm -rf $(BIN_DIR)/*
-
-# Installation rule (not much to install, but here for completeness)
-install:
-	@echo "No installation required."
 
 # Help command
 help:
 	@echo "Available make commands:"
 	@echo "  make        - Build the project."
-	@echo "  make run    - Run the project."
 	@echo "  make clean  - Clean up the build files."
-	@echo "  make install- Install the project (if applicable)."
 	@echo "  make help   - Display this help message."
